@@ -1,0 +1,166 @@
+"""Ablatable neck and task-head variants, inspired by published mechanisms.
+
+These are deliberately simple research implementations, not exact reproductions
+of BiFPN, DyHead or ContextGuidedDown. Retain pretrained layers and initialize
+the modified graph to the original network's output.
+"""
+
+import torch
+from torch import nn
+
+from cable_research.mixer import structure_components
+
+
+class WeightedConcat(nn.Module):
+    """Preserve concat topology while learning static or per-image input weights."""
+
+    def __init__(self, old: nn.Module, mode: str):
+        super().__init__()
+        if mode not in {"weighted", "adaptive"}:
+            raise ValueError("unsupported neck mode")
+        self.i, self.f = old.i, old.f
+        self.type = f"{old.type}+{mode}"
+        self.mode = mode
+        if mode == "weighted":
+            self.logits = nn.Parameter(torch.zeros(2))
+        else:
+            self.router = nn.Linear(4, 2)
+            nn.init.zeros_(self.router.weight)
+            nn.init.zeros_(self.router.bias)
+        self.np = sum(p.numel() for p in self.parameters())
+
+    def forward(self, x):
+        if not isinstance(x, (tuple, list)) or len(x) != 2:
+            raise ValueError("weighted fusion requires exactly two feature inputs")
+        if self.mode == "weighted":
+            weights = (2 * self.logits.softmax(dim=0)).view(1, 2)
+        else:
+            features = torch.stack([t.mean((1, 2, 3)) for t in x] +
+                                   [t.abs().mean((1, 2, 3)) for t in x], dim=1)
+            weights = 2 * self.router(features).softmax(dim=1)
+        return torch.cat([t * weights[:, i].view(-1, 1, 1, 1) for i, t in enumerate(x)], dim=1)
+
+
+class GeometryConcat(nn.Module):
+    """Spatially route two scales using local and context-relative orientation cues.
+
+    A task-specific hypothesis, not a claim of novelty: local structure tensor
+    estimates may also respond to normal cable texture or specular edges.
+    """
+
+    def __init__(self, old: nn.Module):
+        super().__init__()
+        self.i, self.f, self.type = old.i, old.f, f"{old.type}+geometry"
+        self.router = nn.Sequential(nn.Conv2d(8, 8, 1), nn.SiLU(), nn.Conv2d(8, 2, 1))
+        nn.init.zeros_(self.router[-1].weight)
+        nn.init.zeros_(self.router[-1].bias)
+        self.np = sum(p.numel() for p in self.parameters())
+
+    def forward(self, x):
+        if not isinstance(x, (tuple, list)) or len(x) != 2:
+            raise ValueError("geometry fusion requires exactly two feature inputs")
+        cues = []
+        for value in x:
+            local = structure_components(value, window=5)
+            context = structure_components(value, window=21)
+            cues.extend((local, local - context))
+        weights = 2 * self.router(torch.cat(cues, dim=1)).softmax(dim=1)
+        return torch.cat([value * weights[:, i:i + 1] for i, value in enumerate(x)], dim=1)
+
+
+class TaskGatedBranch(nn.Module):
+    """An independently learned, identity-initialized gate before one head branch."""
+
+    def __init__(self, branch: nn.Module):
+        super().__init__()
+        conv = next((m for m in branch.modules() if isinstance(m, nn.Conv2d)), None)
+        if conv is None:
+            raise ValueError("cannot infer head branch input channels")
+        channels = conv.in_channels
+        hidden = max(8, min(channels // 8, 64))
+        self.branch = branch
+        self.gate = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Conv2d(channels, hidden, 1), nn.SiLU(),
+                                  nn.Conv2d(hidden, channels, 1))
+        nn.init.zeros_(self.gate[-1].weight)
+        nn.init.zeros_(self.gate[-1].bias)
+
+    def forward(self, x):
+        return self.branch(x * (1 + 0.25 * self.gate(x).tanh()))
+
+
+class ContextDown(nn.Module):
+    """RT-DETR neck-downsampling adapter with local and dilated context paths."""
+
+    def __init__(self, old: nn.Module):
+        super().__init__()
+        if not hasattr(old, "conv") or old.conv.stride != (2, 2):
+            raise ValueError("expected a stride-2 pretrained neck convolution")
+        channels = old.conv.out_channels
+        self.i, self.f, self.type = old.i, old.f, f"{old.type}+ContextDown"
+        self.base = old
+        self.local = nn.Conv2d(channels, channels, 3, padding=1, groups=channels, bias=False)
+        self.context = nn.Conv2d(channels, channels, 3, padding=2, dilation=2, groups=channels, bias=False)
+        self.mix = nn.Sequential(nn.Conv2d(channels * 2, channels, 1, bias=False), nn.BatchNorm2d(channels), nn.SiLU())
+        self.alpha = nn.Parameter(torch.tensor(0.0))
+        self.np = sum(p.numel() for p in self.parameters())
+
+    def forward(self, x):
+        base = self.base(x)
+        update = self.mix(torch.cat((self.local(base), self.context(base)), dim=1))
+        return base + self.alpha * update
+
+
+def modify_yolo(model, neck="none", head="standard", seed=23456):
+    """Replace known YOLO11 fusion nodes and/or wrap its decoupled branches."""
+    if neck not in {"none", "weighted", "adaptive", "geometry"} or head not in {"standard", "taskgate"}:
+        raise ValueError("unsupported YOLO neck or head")
+    if neck == "none" and head == "standard":
+        return model
+    layers = model.model
+    if len(layers) != 24:
+        raise ValueError("expected the standard 24-layer YOLO11 graph")
+    indices = (12, 15, 18, 21)
+    if neck != "none" and any(getattr(layers[i], "i", None) != i or
+                              layers[i].__class__.__name__ != "Concat" for i in indices):
+        raise ValueError("unexpected neck topology")
+    detect = layers[-1]
+    if head == "taskgate" and (detect.__class__.__name__ != "Detect" or detect.nl != 3 or detect.end2end):
+        raise ValueError("expected a standard non-end-to-end three-scale YOLO11 head")
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(seed)
+        if neck != "none":
+            for index in indices:
+                layers[index] = GeometryConcat(layers[index]) if neck == "geometry" else WeightedConcat(layers[index], neck)
+        if head == "taskgate":
+            for branches in (detect.cv2, detect.cv3):
+                for index, branch in enumerate(branches):
+                    branches[index] = TaskGatedBranch(branch)
+    return model
+
+
+def modify_rtdetr(model, neck="none", seed=23456):
+    """Modify known RT-DETR-L neck fusion/downsampling nodes, not its decoder."""
+    if neck not in {"none", "context", "geometry", "geometry_context"}:
+        raise ValueError("unsupported RT-DETR neck")
+    if neck == "none":
+        return model
+    layers, down_indices, fusion_indices = model.model, (22, 25), (15, 20, 23, 26)
+    if len(layers) != 29:
+        raise ValueError("unexpected RT-DETR-L neck topology")
+    if neck in {"context", "geometry_context"} and any(
+            getattr(layers[i], "i", None) != i or not hasattr(layers[i], "conv") or
+            layers[i].conv.stride != (2, 2) for i in down_indices):
+        raise ValueError("unexpected RT-DETR-L neck topology")
+    if neck in {"geometry", "geometry_context"} and any(
+            getattr(layers[i], "i", None) != i or layers[i].__class__.__name__ != "Concat" for i in fusion_indices):
+        raise ValueError("unexpected RT-DETR-L neck topology")
+    with torch.random.fork_rng(devices=[]):
+        if neck in {"context", "geometry_context"}:
+            torch.manual_seed(seed)
+            for index in down_indices:
+                layers[index] = ContextDown(layers[index])
+        if neck in {"geometry", "geometry_context"}:
+            torch.manual_seed(seed + 1)
+            for index in fusion_indices:
+                layers[index] = GeometryConcat(layers[index])
+    return model
