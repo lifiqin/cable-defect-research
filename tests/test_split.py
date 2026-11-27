@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from cable_research.prepare_external import materialize
 from cable_research.split import create_split
 
 
@@ -58,6 +59,15 @@ class SplitTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "extends beyond"):
             create_split(self.data, self.plan_file, out, 2)
         self.assertFalse(out.exists())
+
+    def test_external_layout_keeps_fold_separation_and_bytes(self):
+        out = self.root / "external"
+        counts = materialize(self.data, self.plan_file, out, 2)
+        self.assertEqual((counts["train"]["images"], counts["val"]["images"]), (4, 2))
+        self.assertTrue((out / "data.yaml").is_file())
+        self.assertEqual((out / "valid/images/b0.jpg").read_bytes(), b"test")
+        self.assertFalse((out / "train/images/b0.jpg").exists())
+        self.assertFalse((out / "test").exists())
 
 
 if __name__ == "__main__":

@@ -4,8 +4,8 @@ import re
 import subprocess
 
 ALLOWED = re.compile(r"(?:\.gitignore|README\.md|pyproject\.toml|check_staged\.py|"
-                     r"\.github/workflows/ci\.yml|docs/(?:related_work|network_families)\.md|"
-                     r"cable_research/[a-z_]+\.py|tests/test_[a-z_]+\.py)")
+                     r"\.github/workflows/ci\.yml|docs/(?:related_work|network_families|neck_head_review|small_object_review|labeling_protocol)\.md|"
+                     r"cable_research/[a-z0-9_]+\.py|tests/test_[a-z0-9_]+\.py)")
 SENSITIVE = re.compile(r"(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|"
                        r"sk-[A-Za-z0-9]{20,}|IMG_\d{4,}|[A-Za-z]:[/\\]Users[/\\])")
 

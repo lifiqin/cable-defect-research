@@ -52,7 +52,7 @@ def main():
     from ultralytics import RTDETR, YOLO
 
     # Import the checkpoint's custom block before loading trusted local weights.
-    from cable_research import mixer  # noqa: F401
+    from cable_research import mixer, neck_head  # noqa: F401
 
     checkpoint = a.weights.resolve(strict=True)
     model = (YOLO(checkpoint) if a.family == "yolo" else RTDETR(checkpoint)).model.float().to(a.device)

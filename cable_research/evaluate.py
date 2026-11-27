@@ -39,10 +39,11 @@ def main():
 
     socket.create_connection = offline
     socket.socket.connect = offline
+    socket.socket.connect_ex = offline
     from ultralytics import RTDETR, YOLO
     from ultralytics.data import utils as data_utils
 
-    from cable_research import mixer  # noqa: F401
+    from cable_research import mixer, neck_head  # noqa: F401
 
     data_utils.check_font = lambda *args, **kwargs: None
     model = YOLO(weights) if a.family == "yolo" else RTDETR(weights)
