@@ -1,4 +1,4 @@
-"""Evaluate local YOLO and optional Faster R-CNN ensembles on original images.
+"""Evaluate local YOLO, RT-DETR and Faster R-CNN ensembles on original images.
 
 This is inference-time NMS ensembling, not a new network architecture. Metrics
 remain development-validation results and must not be called an independent test.
@@ -31,6 +31,7 @@ def main():
     ap.add_argument("--dataset", type=Path, required=True)
     ap.add_argument("--split", type=Path, required=True)
     ap.add_argument("--yolo", type=Path, action="append", default=[])
+    ap.add_argument("--rtdetr", type=Path, action="append", default=[])
     ap.add_argument("--faster", type=Path, help="local Faster R-CNN best_state.pt")
     ap.add_argument("--faster-neck", choices=("standard", "context"), default="standard")
     ap.add_argument("--faster-head", choices=("standard", "taskdual"), default="standard")
@@ -39,10 +40,12 @@ def main():
     ap.add_argument("--nms-iou", type=float, default=0.45)
     ap.add_argument("--augment", action="store_true", help="apply YOLO test-time augmentation")
     a = ap.parse_args()
-    if len(a.yolo) + int(a.faster is not None) < 2 or a.work.exists() or a.imgsz < 128 or not 0 < a.nms_iou <= 1:
+    if (len(a.yolo) + len(a.rtdetr) + int(a.faster is not None) < 2 or a.work.exists() or a.imgsz < 128 or
+            not 0 < a.nms_iou <= 1):
         raise ValueError("need at least two local models and a new output directory")
     dataset, split = a.dataset.resolve(strict=True), a.split.resolve(strict=True)
     yolo_weights = [p.resolve(strict=True) for p in a.yolo]
+    rtdetr_weights = [p.resolve(strict=True) for p in a.rtdetr]
     faster_weights = a.faster.resolve(strict=True) if a.faster else None
     source_dir = (dataset / "images/train").resolve(strict=True)
     paths = [Path(s).resolve(strict=True) for s in split.read_text(encoding="utf-8").splitlines() if s]
@@ -60,14 +63,15 @@ def main():
     socket.create_connection = offline
     socket.socket.connect = offline
     socket.socket.connect_ex = offline
-    from ultralytics import YOLO
+    from ultralytics import RTDETR, YOLO
 
     from cable_research import mixer, neck_head  # noqa: F401
 
     torch.set_num_threads(3)
     yolos = [YOLO(p) for p in yolo_weights]
-    if any(model.names != {0: "scratch", 1: "hole"} for model in yolos):
-        raise ValueError("YOLO ensemble members must have scratch=0 and hole=1 class names")
+    rtdetrs = [RTDETR(p) for p in rtdetr_weights]
+    if any(model.names != {0: "scratch", 1: "hole"} for model in yolos + rtdetrs):
+        raise ValueError("ensemble members must have scratch=0 and hole=1 class names")
     faster = None
     if faster_weights:
         from torchvision.models.detection import fasterrcnn_resnet50_fpn_v2
@@ -89,6 +93,10 @@ def main():
             result = model.predict(image, device="cpu", imgsz=a.imgsz, conf=0.001, iou=a.nms_iou,
                                    max_det=300, verbose=False, augment=a.augment)[0]
             predictions.append(extract(result, 0, 0))
+        for model in rtdetrs:
+            result = model.predict(image, device="cpu", imgsz=a.imgsz, conf=0.001,
+                                   max_det=300, verbose=False)[0]
+            predictions.append(extract(result, 0, 0))
         if faster is not None:
             resized = image.copy()
             resized.thumbnail((a.imgsz, a.imgsz), Image.Resampling.BILINEAR)
@@ -100,7 +108,8 @@ def main():
         if index % 10 == 0 or index == len(paths):
             print(f"Evaluated {index}/{len(paths)} images", flush=True)
     result = {"purpose": "development validation only; not an independent test", "yolo_count": len(yolos),
-              "faster_count": int(faster is not None), "imgsz": a.imgsz, "yolo_tta": a.augment,
+              "rtdetr_count": len(rtdetrs), "faster_count": int(faster is not None),
+              "imgsz": a.imgsz, "yolo_tta": a.augment,
               "nms_iou": a.nms_iou, "images": len(paths), "validation": metric.compute()}
     (work / "metrics.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2), flush=True)

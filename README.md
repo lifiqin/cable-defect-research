@@ -100,7 +100,7 @@ python -m cable_research.sliced_eval --dataset DATASET_ROOT --split PRIVATE_VAL.
 
 对本仓库的 RT-DETR 检查点可额外传入 `--family rtdetr`；全图模式保持其无需 NMS 的输出，切片模式才使用 NMS 融合跨窗口预测。RT-DETR 暂不支持该脚本的 `--augment` 开关。
 
-作为另一项推理对照，`python -m cable_research.ensemble_eval --dataset DATASET_ROOT --split PRIVATE_VAL.txt --yolo LOCAL_YOLO_A.pt --yolo LOCAL_YOLO_B.pt --work ./local/ensemble --augment` 可对两个本地 YOLO 检查点做类别感知 NMS 集成；也可以用 `--faster LOCAL_FASTER_STATE.pt` 加入本仓库两阶段模型。应报告成员数和额外计算量；这不是单个新网络，也不能把不同模型输出混合后称作单模型提升。
+作为另一项推理对照，`python -m cable_research.ensemble_eval --dataset DATASET_ROOT --split PRIVATE_VAL.txt --yolo LOCAL_YOLO_A.pt --yolo LOCAL_YOLO_B.pt --work ./local/ensemble --augment` 可对两个本地 YOLO 检查点做类别感知 NMS 集成；也可以用 `--rtdetr LOCAL_RTDETR.pt`、`--faster LOCAL_FASTER_STATE.pt` 加入本仓库的其他检测器。`--augment` 仅作用于 YOLO，RT-DETR 原输出在跨模型合并时才参与 NMS。应报告成员数和额外计算量；这不是单个新网络，也不能把不同模型输出混合后称作单模型提升。
 
 ```powershell
 python -m unittest discover -s tests -v
