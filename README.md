@@ -51,6 +51,8 @@ python -m cable_research.train --dataset DATASET_ROOT --fold-plan PRIVATE_PLAN.j
 
 将 `--mode baseline` 改为 `isotropic`、`uniform`、`tensor`、`contrast` 或 `hybrid`，并为 `--work` 指定不同的新目录，以相同超参数开展消融。`--sites p3p4` 可同时在 P3 和 P4 插入模块；`--channel-gate` 可组合 SE 风格的通道门控。位置或模块组合变化必须与参数量、计算量及单因素版本一起比较。每次训练仅保存本地 `results.csv` 和检查点，不会自动上传。
 
+磁盘空间有限时，可为标准预训练架构增加 `--metrics-only`。此模式不保存训练后模型，逐轮记录训练时 EMA 验证结果，并按 Ultralytics 验证 fitness 选出一轮写入 `metrics.json`。它不能恢复训练、导出模型、再次评测或实施依赖检查点的推理实验；结果也不完全等同于重新加载半精度检查点后的独立验证。要部署、复核或复现论文结果，应另行保留必要的可信权重和独立测试记录。该模式目前不支持 P2、自定义架构或多设备。
+
 相同基础权重和预算下，可在示例中分别增加 `--neck weighted`、`--head taskgate` 和 `--neck weighted --head taskgate` 检验单因素和组合；也可测试 `--neck adaptive`。`--head p2` 需要单独一组并记录可迁移权重数及显存；不支持与这两种 Neck 插件直接组合。检测头预训练不一致、批量变化时不能将差异全部归因于 P2。
 
 也可用 `python -m cable_research.grid` 构造模式、位置、通道门控及随机种子的有限组合。默认只打印计划，不启动训练；只有显式添加 `--execute` 才会依次运行，最多 24 组。重复在同一验证集上搜索会产生选模偏差，必须保留未用于搜索的独立测试集。

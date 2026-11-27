@@ -39,6 +39,8 @@ def main():
     ap.add_argument("--nbs", type=int, default=64, help="nominal batch size controlling gradient accumulation")
     ap.add_argument("--warmup-bias-lr", type=float, default=0.1)
     ap.add_argument("--warmup-epochs", type=float, default=3.0)
+    ap.add_argument("--metrics-only", action="store_true",
+                    help="record per-epoch validation without saving a trained model")
     a = ap.parse_args()
     if (not 1 <= a.epochs <= 300 or a.batch < 1 or a.imgsz < 128 or not 0 < a.lr0 <= 1 or
             not 0 <= a.mosaic <= 1 or not 0 <= a.close_mosaic <= a.epochs or a.nbs < 1 or
@@ -59,6 +61,8 @@ def main():
         ap.error("custom YAML is supported only for YOLO baseline mode")
     if a.architecture and (a.neck != "none" or a.head != "standard"):
         ap.error("neck/head replacement requires the standard YOLO11 graph")
+    if a.metrics_only and (a.head == "p2" or a.architecture or "," in a.device):
+        ap.error("metrics-only supports a single device and a standard pretrained architecture")
     weights = a.weights.resolve(strict=True)
     work = a.work.resolve()
     if work.exists():
@@ -107,14 +111,31 @@ def main():
         model = YOLO(a.architecture).load(weights)
     else:
         model = YOLO(weights) if a.family == "yolo" else RTDETR(weights)
-    model.train(trainer=ResearchTrainer if a.family == "yolo" else ResearchRTTrainer,
-                data=str(data), epochs=a.epochs, imgsz=a.imgsz,
-                batch=a.batch, workers=0, device=a.device, project=str(work), name="run",
-                exist_ok=False, seed=a.seed, deterministic=True, amp=False, plots=False,
-                optimizer=a.optimizer, lr0=a.lr0, mosaic=a.mosaic, close_mosaic=a.close_mosaic,
-                nbs=a.nbs, warmup_bias_lr=a.warmup_bias_lr, warmup_epochs=a.warmup_epochs,
-                patience=0, verbose=False,
-                cache="ram" if a.cache == "ram" else False, val=True, save=True)
+    trainer_type = ResearchTrainer if a.family == "yolo" else ResearchRTTrainer
+    options = {"data": str(data), "epochs": a.epochs, "imgsz": a.imgsz, "batch": a.batch, "workers": 0,
+               "device": a.device, "project": str(work), "name": "run", "exist_ok": False, "seed": a.seed,
+               "deterministic": True, "amp": False, "plots": False, "optimizer": a.optimizer, "lr0": a.lr0,
+               "mosaic": a.mosaic, "close_mosaic": a.close_mosaic, "nbs": a.nbs,
+               "warmup_bias_lr": a.warmup_bias_lr, "warmup_epochs": a.warmup_epochs,
+               "patience": 0, "verbose": False, "cache": "ram" if a.cache == "ram" else False,
+               "val": True, "save": not a.metrics_only}
+    if a.metrics_only:
+        from cable_research.metrics_only import EpochMetricsCapture, NoCheckpointMixin
+
+        class MetricsOnlyTrainer(NoCheckpointMixin, trainer_type):
+            pass
+
+        # Match Model.train's trainer initialization, without its mandatory checkpoint reload.
+        overrides = {**model.overrides, "model": model.overrides["model"], "task": model.task,
+                     **options, "mode": "train"}
+        trainer = MetricsOnlyTrainer(overrides=overrides, _callbacks=model.callbacks)
+        trainer.model = trainer.get_model(weights=model.model, cfg=model.model.yaml)
+        capture = EpochMetricsCapture(work)
+        trainer.add_callback("on_fit_epoch_end", capture.on_fit_epoch_end)
+        trainer.train()
+        capture.finish(a.imgsz, a.batch)
+    else:
+        model.train(trainer=trainer_type, **options)
     print("Completed", a.mode, "in", work, flush=True)
 
 
