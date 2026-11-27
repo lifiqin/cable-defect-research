@@ -45,15 +45,17 @@ def main():
     parser.add_argument("--imgsz", type=int, default=640)
     parser.add_argument("--warmup", type=int, default=20)
     parser.add_argument("--trials", type=int, default=100)
+    parser.add_argument("--family", choices=("yolo", "rtdetr"), default="yolo")
     a = parser.parse_args()
     if a.out.exists() or a.imgsz < 128:
         raise ValueError("invalid output or image size")
-    from ultralytics import YOLO
+    from ultralytics import RTDETR, YOLO
 
     # Import the checkpoint's custom block before loading trusted local weights.
     from cable_research import mixer  # noqa: F401
 
-    model = YOLO(a.weights.resolve(strict=True)).model.float().to(a.device)
+    checkpoint = a.weights.resolve(strict=True)
+    model = (YOLO(checkpoint) if a.family == "yolo" else RTDETR(checkpoint)).model.float().to(a.device)
     device = torch.device(a.device)
     generator = torch.Generator().manual_seed(123)
     x = torch.rand((1, 3, a.imgsz, a.imgsz), generator=generator).to(device)

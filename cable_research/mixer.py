@@ -54,27 +54,34 @@ class GeometryMixer(nn.Module):
 
     ``isotropic`` uses a square depthwise convolution, ``uniform`` averages
     four directional experts, ``tensor`` weights them using local structure,
-    and ``contrast`` uses the local-minus-context structure components.
+    ``contrast`` uses local-minus-context structure, and ``hybrid`` combines
+    local tensor routing with a square-kernel residual branch.
     """
 
-    def __init__(self, channels: int, mode: str, kernel_size: int = 7):
+    def __init__(self, channels: int, mode: str, kernel_size: int = 7, channel_gate: bool = False):
         super().__init__()
-        if mode not in {"isotropic", "uniform", "tensor", "contrast"}:
+        if mode not in {"isotropic", "uniform", "tensor", "contrast", "hybrid"}:
             raise ValueError(f"unsupported mixer mode: {mode}")
         self.mode = mode
-        if mode == "isotropic":
+        if mode in {"isotropic", "hybrid"}:
             self.square = nn.Conv2d(channels, channels, kernel_size, padding=kernel_size // 2,
                                     groups=channels, bias=False)
-        else:
+        if mode != "isotropic":
             self.horizontal = nn.Conv2d(channels, channels, (1, kernel_size),
                                         padding=(0, kernel_size // 2), groups=channels, bias=False)
             self.vertical = nn.Conv2d(channels, channels, (kernel_size, 1),
                                       padding=(kernel_size // 2, 0), groups=channels, bias=False)
             self.diagonal = DiagonalDepthwise(channels, kernel_size)
             self.antidiagonal = DiagonalDepthwise(channels, kernel_size, antidiagonal=True)
-        if mode in {"tensor", "contrast"}:
+        if mode in {"tensor", "contrast", "hybrid"}:
             self.log_temperature = nn.Parameter(torch.tensor(0.0))
         self.project = nn.Conv2d(channels, channels, 1, bias=False)
+        if channel_gate:
+            hidden = max(8, channels // 8)
+            self.channel_gate = nn.Sequential(nn.AdaptiveAvgPool2d(1), nn.Conv2d(channels, hidden, 1),
+                                              nn.SiLU(), nn.Conv2d(hidden, channels, 1), nn.Sigmoid())
+        else:
+            self.channel_gate = None
         self.alpha = nn.Parameter(torch.tensor(0.05))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -93,7 +100,13 @@ class GeometryMixer(nn.Module):
                 logits = torch.cat((-u, u, -v, v), dim=1) * F.softplus(self.log_temperature)
                 weights = logits.softmax(dim=1).unsqueeze(2)
                 mixed = (experts * weights).sum(dim=1)
-        return x + self.alpha * self.project(mixed)
+            if self.mode == "hybrid":
+                mixed = (mixed + self.square(x)) * 0.5
+        update = self.project(mixed)
+        gate = getattr(self, "channel_gate", None)  # Older trusted checkpoints predate this optional field.
+        if gate is not None:
+            update = update * gate(x)
+        return x + self.alpha * update
 
 
 class WrappedFeatureBlock(nn.Module):
@@ -110,17 +123,24 @@ class WrappedFeatureBlock(nn.Module):
         return self.mixer(self.block(x))
 
 
-def attach_mixer(model: nn.Module, mode: str, seed: int = 12345) -> nn.Module:
-    """Attach at P3 head output after pretrained parameters have been loaded."""
+def attach_mixer(model: nn.Module, mode: str, seed: int = 12345, sites: str = "p3",
+                 channel_gate: bool = False) -> nn.Module:
+    """Attach at the selected P3/P4 head outputs after pretrained loading."""
+    if sites not in {"p3", "p3p4"}:
+        raise ValueError("unsupported feature sites")
     if mode == "baseline":
         return model
-    block = model.model[16]
-    if getattr(block, "i", None) != 16 or not hasattr(block, "cv2"):
+    indices = (16,) if sites == "p3" else (16, 19)
+    if len(model.model) <= max(indices):
         raise ValueError("unexpected YOLO11 graph; refusing to alter an unknown model")
-    channels = block.cv2.conv.out_channels
-    # Do not change global RNG state and thereby perturb the baseline data order.
-    with torch.random.fork_rng(devices=[]):
-        torch.manual_seed(seed)
-        mixer = GeometryMixer(channels, mode)
-    model.model[16] = WrappedFeatureBlock(block, mixer)
+    blocks = [model.model[i] for i in indices]
+    if any(getattr(b, "i", None) != i or not hasattr(b, "cv2") for i, b in zip(indices, blocks, strict=True)):
+        raise ValueError("unexpected YOLO11 graph; refusing to alter an unknown model")
+    for offset, (index, block) in enumerate(zip(indices, blocks, strict=True)):
+        channels = block.cv2.conv.out_channels
+        # Preserve the baseline RNG state and the same P3 initialization across sites.
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(seed + offset)
+            mixer = GeometryMixer(channels, mode, channel_gate=channel_gate)
+        model.model[index] = WrappedFeatureBlock(block, mixer)
     return model

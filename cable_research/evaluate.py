@@ -24,6 +24,7 @@ def main():
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--batch", type=int, default=4)
     ap.add_argument("--device", default="0")
+    ap.add_argument("--family", choices=("yolo", "rtdetr"), default="yolo")
     a = ap.parse_args()
     weights, data, work = a.weights.resolve(strict=True), a.data.resolve(strict=True), a.work.resolve()
     if work.exists():
@@ -38,13 +39,13 @@ def main():
 
     socket.create_connection = offline
     socket.socket.connect = offline
-    from ultralytics import YOLO
+    from ultralytics import RTDETR, YOLO
     from ultralytics.data import utils as data_utils
 
     from cable_research import mixer  # noqa: F401
 
     data_utils.check_font = lambda *args, **kwargs: None
-    model = YOLO(weights)
+    model = YOLO(weights) if a.family == "yolo" else RTDETR(weights)
     metrics = model.val(data=str(data), split="val", imgsz=a.imgsz, batch=a.batch, device=a.device,
                         workers=0, plots=False, verbose=False, save_json=False,
                         project=str(work), name="evaluation", exist_ok=False)
