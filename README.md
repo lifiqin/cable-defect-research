@@ -42,6 +42,18 @@ python -m cable_research.train --dataset DATASET_ROOT --fold-plan PRIVATE_PLAN.j
 
 将 `--mode baseline` 改为 `isotropic`、`uniform`、`tensor` 或 `contrast`，并为 `--work` 指定不同的新目录，以相同超参数开展消融。每次训练仅保存本地 `results.csv` 和检查点，不会自动上传。
 
+作为额外的跨架构参考，`baseline` 模式也可使用受支持的 YOLO26 本地权重；这不是同一骨干上的模块消融，不同预训练来源也必须报告。下例测量本地可信检查点的网络前向延迟，不包含预处理、后处理或磁盘 I/O：
+
+```powershell
+python -m cable_research.benchmark --weights LOCAL_MODEL.pt --out ./local/latency.json --device cuda:0 --imgsz 640
+```
+
+要用同一验证协议提取各类别 AP，可使用下列命令。输入的数据配置仍须自行确认分组及标签质量；重复使用它选模不能构成独立测试。
+
+```powershell
+python -m cable_research.evaluate --weights LOCAL_MODEL.pt --data VALIDATION_CONFIG.yaml --work ./local/evaluation --imgsz 640 --batch 4
+```
+
 ```powershell
 python -m unittest discover -s tests -v
 python -m ruff check .
