@@ -2,7 +2,7 @@ import unittest
 
 import torch
 
-from cable_research.sliced_eval import combine, starts, windows
+from cable_research.sliced_eval import combine, merge_predictions, starts, windows
 
 
 class SlicedEvaluationTests(unittest.TestCase):
@@ -26,6 +26,12 @@ class SlicedEvaluationTests(unittest.TestCase):
         result = combine(predictions, nms_iou=0.7, max_dets=300)
         self.assertEqual(result["labels"].tolist(), [1, 2])
         self.assertEqual(combine([], 0.7, 300)["boxes"].shape, (0, 4))
+
+    def test_rtdetr_full_mode_does_not_apply_extra_nms(self):
+        prediction = {"boxes": torch.tensor([[0., 0., 10., 10.], [0., 0., 10., 10.]]),
+                      "scores": torch.tensor([0.9, 0.8]), "labels": torch.tensor([1, 1])}
+        self.assertEqual(len(merge_predictions([prediction], "rtdetr", "full", 0.7)["boxes"]), 2)
+        self.assertEqual(len(merge_predictions([prediction], "yolo", "full", 0.7)["boxes"]), 1)
 
 
 if __name__ == "__main__":

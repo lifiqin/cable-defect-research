@@ -52,6 +52,14 @@ def extract(result, x, y):
             "labels": result.boxes.cls.detach().cpu().long() + 1}
 
 
+def merge_predictions(predictions, family, mode, nms_iou):
+    if family == "rtdetr" and mode == "full":
+        if len(predictions) != 1:
+            raise ValueError("RT-DETR full-image mode expects exactly one output")
+        return predictions[0]
+    return combine(predictions, nms_iou=nms_iou, max_dets=300)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--dataset", type=Path, required=True)
@@ -59,6 +67,7 @@ def main():
     ap.add_argument("--weights", type=Path, required=True)
     ap.add_argument("--work", type=Path, required=True)
     ap.add_argument("--mode", choices=("full", "tile", "both"), default="full")
+    ap.add_argument("--family", choices=("yolo", "rtdetr"), default="yolo")
     ap.add_argument("--tile", type=int, default=2048, help="tile side in original-image pixels")
     ap.add_argument("--overlap", type=float, default=0.25)
     ap.add_argument("--imgsz", type=int, default=640)
@@ -70,7 +79,7 @@ def main():
     dataset, split, weights = (p.resolve(strict=True) for p in (a.dataset, a.split, a.weights))
     work = a.work.resolve()
     if (work.exists() or a.imgsz < 128 or a.tile < 128 or a.batch < 1 or not 0 <= a.overlap < 0.8 or
-            not 0 < a.nms_iou <= 1):
+            not 0 < a.nms_iou <= 1 or (a.family == "rtdetr" and a.augment)):
         raise ValueError("invalid output or inference configuration")
     paths = [Path(line).resolve(strict=True) for line in split.read_text(encoding="utf-8").splitlines() if line]
     source_dir = (dataset / "images/train").resolve(strict=True)
@@ -87,12 +96,14 @@ def main():
     socket.create_connection = offline
     socket.socket.connect = offline
     socket.socket.connect_ex = offline
-    from ultralytics import YOLO
+    from ultralytics import RTDETR, YOLO
 
     from cable_research import mixer, neck_head  # noqa: F401
 
     torch.set_num_threads(3)
-    model = YOLO(weights)
+    model = YOLO(weights) if a.family == "yolo" else RTDETR(weights)
+    if model.names != {0: "scratch", 1: "hole"}:
+        raise ValueError("checkpoint must have scratch=0 and hole=1 class names")
     metric = UltralyticsAP()
     passes = 0
     common = {"imgsz": a.imgsz, "conf": 0.001, "iou": a.nms_iou, "max_det": 300,
@@ -114,13 +125,16 @@ def main():
                 results = model.predict([image.crop(box) for box in batch], **common)
                 predictions.extend(extract(result, box[0], box[1]) for result, box in zip(results, batch, strict=True))
                 passes += len(batch)
-        metric.update(combine(predictions, nms_iou=a.nms_iou, max_dets=300), {"boxes": targets, "labels": labels})
+        output = merge_predictions(predictions, a.family, a.mode, a.nms_iou)
+        metric.update(output, {"boxes": targets, "labels": labels})
         if index % 10 == 0 or index == len(paths):
             print(f"Evaluated {index}/{len(paths)} images", flush=True)
     result = {"purpose": "approximate-group validation only; not an independent test", "mode": a.mode,
+              "family": a.family,
               "tile_original_pixels": a.tile if a.mode != "full" else None, "overlap": a.overlap,
               "imgsz": a.imgsz, "augment": a.augment, "images": len(paths), "model_passes": passes,
-              "merge": f"class-aware NMS at {a.nms_iou}, maximum 300 per original image",
+              "merge": ("RT-DETR full-image output without extra NMS" if a.family == "rtdetr" and a.mode == "full"
+                        else f"class-aware NMS at {a.nms_iou}, maximum 300 per original image"),
               "validation": metric.compute()}
     (work / "metrics.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(result, indent=2), flush=True)
