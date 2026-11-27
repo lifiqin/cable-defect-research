@@ -89,6 +89,40 @@ class NeckHeadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "topology"):
             modify_rtdetr(Fake(), neck="context")
 
+    def test_rtdetr_combination_preserves_individual_initialization_and_rng(self):
+        class Concat(nn.Module):
+            def __init__(self, index):
+                super().__init__()
+                self.i, self.f, self.type = index, [-1, -2], "Concat"
+
+        class Down(nn.Module):
+            def __init__(self, index):
+                super().__init__()
+                self.i, self.f, self.type = index, -1, "Conv"
+                self.conv = nn.Conv2d(8, 8, 3, stride=2, padding=1)
+
+            def forward(self, x):
+                return self.conv(x)
+
+        class Fake(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.model = nn.ModuleList([nn.Identity() for _ in range(29)])
+                for i in (15, 20, 23, 26):
+                    self.model[i] = Concat(i)
+                for i in (22, 25):
+                    self.model[i] = Down(i)
+
+        base = Fake()
+        context, geometry, combined = (copy.deepcopy(base) for _ in range(3))
+        state = torch.random.get_rng_state().clone()
+        modify_rtdetr(context, neck="context")
+        modify_rtdetr(geometry, neck="geometry")
+        modify_rtdetr(combined, neck="geometry_context")
+        self.assertTrue(torch.equal(state, torch.random.get_rng_state()))
+        self.assertTrue(torch.equal(context.model[22].context.weight, combined.model[22].context.weight))
+        self.assertTrue(torch.equal(geometry.model[15].router[0].weight, combined.model[15].router[0].weight))
+
     def test_yolo_geometry_fusion_preserves_initial_prediction(self):
         from ultralytics import YOLO
 

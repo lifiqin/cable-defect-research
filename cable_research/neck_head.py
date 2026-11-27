@@ -139,18 +139,28 @@ def modify_yolo(model, neck="none", head="standard", seed=23456):
 
 
 def modify_rtdetr(model, neck="none", seed=23456):
-    """Wrap known RT-DETR-L bottom-up neck downsampling nodes, not its decoder."""
-    if neck not in {"none", "context"}:
+    """Modify known RT-DETR-L neck fusion/downsampling nodes, not its decoder."""
+    if neck not in {"none", "context", "geometry", "geometry_context"}:
         raise ValueError("unsupported RT-DETR neck")
     if neck == "none":
         return model
-    layers, indices = model.model, (22, 25)
-    if len(layers) != 29 or any(getattr(layers[i], "i", None) != i or
-                                not hasattr(layers[i], "conv") or layers[i].conv.stride != (2, 2)
-                                for i in indices):
+    layers, down_indices, fusion_indices = model.model, (22, 25), (15, 20, 23, 26)
+    if len(layers) != 29:
+        raise ValueError("unexpected RT-DETR-L neck topology")
+    if neck in {"context", "geometry_context"} and any(
+            getattr(layers[i], "i", None) != i or not hasattr(layers[i], "conv") or
+            layers[i].conv.stride != (2, 2) for i in down_indices):
+        raise ValueError("unexpected RT-DETR-L neck topology")
+    if neck in {"geometry", "geometry_context"} and any(
+            getattr(layers[i], "i", None) != i or layers[i].__class__.__name__ != "Concat" for i in fusion_indices):
         raise ValueError("unexpected RT-DETR-L neck topology")
     with torch.random.fork_rng(devices=[]):
-        torch.manual_seed(seed)
-        for index in indices:
-            layers[index] = ContextDown(layers[index])
+        if neck in {"context", "geometry_context"}:
+            torch.manual_seed(seed)
+            for index in down_indices:
+                layers[index] = ContextDown(layers[index])
+        if neck in {"geometry", "geometry_context"}:
+            torch.manual_seed(seed + 1)
+            for index in fusion_indices:
+                layers[index] = GeometryConcat(layers[index])
     return model

@@ -21,7 +21,8 @@ def main():
     ap.add_argument("--sites", choices=("p3", "p3p4"), default="p3")
     ap.add_argument("--channel-gate", action="store_true", help="combine mixer with SE-style channel gating")
     ap.add_argument("--family", choices=("yolo", "rtdetr"), default="yolo")
-    ap.add_argument("--neck", choices=("none", "weighted", "adaptive", "geometry", "context"), default="none")
+    ap.add_argument("--neck", choices=("none", "weighted", "adaptive", "geometry", "context", "geometry_context"),
+                    default="none")
     ap.add_argument("--head", choices=("standard", "taskgate", "p2"), default="standard")
     ap.add_argument("--architecture", default=None, help="optional local or bundled YOLO YAML, baseline mode only")
     ap.add_argument("--fold", type=int, choices=(1, 2, 3), default=2)
@@ -47,9 +48,10 @@ def main():
         ap.error("baseline does not have mixer sites or channel gating")
     if a.family == "rtdetr" and a.mode != "baseline":
         ap.error("RT-DETR currently supports baseline mode only")
-    if a.family == "rtdetr" and (a.neck not in {"none", "context"} or a.head != "standard"):
-        ap.error("RT-DETR supports standard decoder and none/context neck only")
-    if a.family == "yolo" and a.neck == "context":
+    if a.family == "rtdetr" and (a.neck not in {"none", "context", "geometry", "geometry_context"} or
+                                  a.head != "standard"):
+        ap.error("RT-DETR supports its standard decoder and none/context/geometry/geometry_context necks")
+    if a.family == "yolo" and a.neck in {"context", "geometry_context"}:
         ap.error("context downsampling is only implemented for RT-DETR-L")
     if a.head == "p2" and (a.family != "yolo" or a.neck != "none" or a.mode != "baseline" or a.architecture):
         ap.error("P2 comparison currently supports an unmodified YOLO11 base only")
