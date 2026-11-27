@@ -13,6 +13,7 @@
 | [DPN-Detector 双金字塔及双头，2023](https://www.mdpi.com/2076-3417/13/2/1054) | 在 Faster R-CNN 中结合多尺度金字塔与区分分类、回归的双头，研究钢板表面缺陷。 | 本仓库仅用简化上下文 FPN 与分类/回归适配分支，未完整复现 DPN 或其双头；“两阶段加金字塔和双头”本身已有先例。 |
 | [AMFNet，2025](https://link.springer.com/article/10.1007/s10845-025-02613-5) | 基于 Faster R-CNN ResNet50-FPN，融合多层特征和空间上下文。 | 为两阶段 Neck 设计提供参考，当前没有实现该方法。 |
 | [SA-FPN，2025](https://www.sciencedirect.com/science/article/pii/S0263224125003781) | 用尺度感知注意力融合表面缺陷的多尺度特征。 | 与 Neck 重加权的设计目标有关，但本仓库未复现 SA-FPN。 |
+| [MLQ-YOLO，2026](https://www.techscience.com/cmc/v89n3/69362/html) | 已结合多尺度门控、局部结构感知与质量感知检测头，针对钢材小而细长的表面缺陷。 | 与本研究的问题设定和组合方向高度相关；其局部窗口注意力与本仓库结构张量方向路由并非同一实现，但不能把“局部结构＋多尺度门控＋检测头”作为独有创新，仍需逐项查重和强对照。 |
 | [RF-DETR，ICLR 2026](https://proceedings.iclr.cc/paper_files/paper/2026/hash/5bed8703db85ab27dc32f6a42f8fbdb6-Abstract-Conference.html) | Transformer 检测和不同预训练特征提供非 YOLO 对照。 | 可使用官方 Nano 权重、指定 Python 环境和本地离线训练；训练配方、后处理、评估实现可能与 YOLO 不同。 |
 | [WPFormer，CVPR 2025](https://openaccess.thecvf.com/content/CVPR2025/html/Yan_Wavelet_and_Prototype_Augmented_Query-based_Transformer_for_Pixel-level_Surface_Defect_CVPR_2025_paper.html) | 小波、原型与查询式 Transformer 用于像素级表面缺陷识别。 | 面向细长缺陷的可选研究方向；现有框标注不是像素级真值，不能声称复现该分割方法。 |
 
