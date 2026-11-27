@@ -4,7 +4,14 @@ import unittest
 import torch
 from torch import nn
 
-from cable_research.neck_head import ContextDown, TaskGatedBranch, WeightedConcat, modify_rtdetr, modify_yolo
+from cable_research.neck_head import (
+    ContextDown,
+    GeometryConcat,
+    TaskGatedBranch,
+    WeightedConcat,
+    modify_rtdetr,
+    modify_yolo,
+)
 
 
 class FakeConcat(nn.Module):
@@ -33,6 +40,14 @@ class NeckHeadTests(unittest.TestCase):
         self.assertTrue(torch.equal(branch(x), wrapped(x)))
         wrapped(x).sum().backward()
         self.assertIsNotNone(wrapped.gate[-1].weight.grad)
+
+    def test_geometry_fusion_is_identity_initialized_and_differentiable(self):
+        x = [torch.randn(2, 3, 16, 16, requires_grad=True), torch.randn(2, 5, 16, 16, requires_grad=True)]
+        module = GeometryConcat(FakeConcat())
+        actual = module(x)
+        self.assertTrue(torch.equal(actual, torch.cat(x, dim=1)))
+        actual.square().mean().backward()
+        self.assertTrue(torch.isfinite(module.router[-1].weight.grad).all())
 
     def test_context_down_preserves_pretrained_branch_at_initialization(self):
         class FakeDown(nn.Module):
@@ -73,6 +88,18 @@ class NeckHeadTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "topology"):
             modify_rtdetr(Fake(), neck="context")
+
+    def test_yolo_geometry_fusion_preserves_initial_prediction(self):
+        from ultralytics import YOLO
+
+        torch.set_num_threads(2)
+        model = YOLO("yolo11n.yaml").model.eval()
+        original = copy.deepcopy(model).eval()
+        modify_yolo(model, neck="geometry", head="taskgate")
+        x = torch.randn(1, 3, 64, 64)
+        with torch.inference_mode():
+            a, b = original(x)[0], model(x)[0]
+        self.assertTrue(torch.allclose(a, b, atol=1e-6, rtol=1e-6))
 
 
 if __name__ == "__main__":

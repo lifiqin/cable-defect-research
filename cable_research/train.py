@@ -21,7 +21,7 @@ def main():
     ap.add_argument("--sites", choices=("p3", "p3p4"), default="p3")
     ap.add_argument("--channel-gate", action="store_true", help="combine mixer with SE-style channel gating")
     ap.add_argument("--family", choices=("yolo", "rtdetr"), default="yolo")
-    ap.add_argument("--neck", choices=("none", "weighted", "adaptive", "context"), default="none")
+    ap.add_argument("--neck", choices=("none", "weighted", "adaptive", "geometry", "context"), default="none")
     ap.add_argument("--head", choices=("standard", "taskgate", "p2"), default="standard")
     ap.add_argument("--architecture", default=None, help="optional local or bundled YOLO YAML, baseline mode only")
     ap.add_argument("--fold", type=int, choices=(1, 2, 3), default=2)

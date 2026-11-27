@@ -8,6 +8,8 @@ the modified graph to the original network's output.
 import torch
 from torch import nn
 
+from cable_research.mixer import structure_components
+
 
 class WeightedConcat(nn.Module):
     """Preserve concat topology while learning static or per-image input weights."""
@@ -37,6 +39,33 @@ class WeightedConcat(nn.Module):
                                    [t.abs().mean((1, 2, 3)) for t in x], dim=1)
             weights = 2 * self.router(features).softmax(dim=1)
         return torch.cat([t * weights[:, i].view(-1, 1, 1, 1) for i, t in enumerate(x)], dim=1)
+
+
+class GeometryConcat(nn.Module):
+    """Spatially route two scales using local and context-relative orientation cues.
+
+    A task-specific hypothesis, not a claim of novelty: local structure tensor
+    estimates may also respond to normal cable texture or specular edges.
+    """
+
+    def __init__(self, old: nn.Module):
+        super().__init__()
+        self.i, self.f, self.type = old.i, old.f, f"{old.type}+geometry"
+        self.router = nn.Sequential(nn.Conv2d(8, 8, 1), nn.SiLU(), nn.Conv2d(8, 2, 1))
+        nn.init.zeros_(self.router[-1].weight)
+        nn.init.zeros_(self.router[-1].bias)
+        self.np = sum(p.numel() for p in self.parameters())
+
+    def forward(self, x):
+        if not isinstance(x, (tuple, list)) or len(x) != 2:
+            raise ValueError("geometry fusion requires exactly two feature inputs")
+        cues = []
+        for value in x:
+            local = structure_components(value, window=5)
+            context = structure_components(value, window=21)
+            cues.extend((local, local - context))
+        weights = 2 * self.router(torch.cat(cues, dim=1)).softmax(dim=1)
+        return torch.cat([value * weights[:, i:i + 1] for i, value in enumerate(x)], dim=1)
 
 
 class TaskGatedBranch(nn.Module):
@@ -83,7 +112,7 @@ class ContextDown(nn.Module):
 
 def modify_yolo(model, neck="none", head="standard", seed=23456):
     """Replace known YOLO11 fusion nodes and/or wrap its decoupled branches."""
-    if neck not in {"none", "weighted", "adaptive"} or head not in {"standard", "taskgate"}:
+    if neck not in {"none", "weighted", "adaptive", "geometry"} or head not in {"standard", "taskgate"}:
         raise ValueError("unsupported YOLO neck or head")
     if neck == "none" and head == "standard":
         return model
@@ -101,7 +130,7 @@ def modify_yolo(model, neck="none", head="standard", seed=23456):
         torch.manual_seed(seed)
         if neck != "none":
             for index in indices:
-                layers[index] = WeightedConcat(layers[index], neck)
+                layers[index] = GeometryConcat(layers[index]) if neck == "geometry" else WeightedConcat(layers[index], neck)
         if head == "taskgate":
             for branches in (detect.cv2, detect.cv3):
                 for index, branch in enumerate(branches):
