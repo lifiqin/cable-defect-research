@@ -59,6 +59,8 @@ RT-DETR 的 CUDA 可变形注意力包含无确定性反向实现的算子；即
 
 训练提供 `--optimizer` 与 `--lr0` 以检验不同架构的训练配方；与网络结构对照不同，改变优化器或学习率属于另一因素，需要单独记录和消融。
 
+对小数据集上的 RT-DETR 等模型，还可分别设置 `--nbs`、`--warmup-bias-lr` 和 `--warmup-epochs` 检验有效批量及预热。改变 `nbs` 会改变梯度累积和优化步数，不能当作只更换网络的对照；默认值保持 Ultralytics 的训练设置。
+
 细微缺陷可单独比较 `--mosaic 0`、默认 `--mosaic 1 --close-mosaic 0`、以及例如 `--mosaic 1 --close-mosaic 10` 的训练配方；更改增强不是网络结构改进，效果需在固定划分和预算下验证。
 
 另提供 RF-DETR Nano 与 Faster R-CNN R50-FPN-v2 的本地基线。RF-DETR 和可选 COCO 评估需要额外依赖：在项目指定环境中先检查依赖冲突，再按需安装 `python -m pip install -e ".[alternatives]"`；自行准备可信的对应官方权重。两个框架的增强、优化器、batch、后处理及评测实现不同，跨框架对照不是只改变 Neck/Head 的消融。下面路径均为本地占位符：

@@ -35,9 +35,13 @@ def main():
     ap.add_argument("--lr0", type=float, default=0.002)
     ap.add_argument("--mosaic", type=float, default=1.0)
     ap.add_argument("--close-mosaic", type=int, default=0)
+    ap.add_argument("--nbs", type=int, default=64, help="nominal batch size controlling gradient accumulation")
+    ap.add_argument("--warmup-bias-lr", type=float, default=0.1)
+    ap.add_argument("--warmup-epochs", type=float, default=3.0)
     a = ap.parse_args()
     if (not 1 <= a.epochs <= 300 or a.batch < 1 or a.imgsz < 128 or not 0 < a.lr0 <= 1 or
-            not 0 <= a.mosaic <= 1 or not 0 <= a.close_mosaic <= a.epochs):
+            not 0 <= a.mosaic <= 1 or not 0 <= a.close_mosaic <= a.epochs or a.nbs < 1 or
+            not 0 <= a.warmup_bias_lr <= 1 or not 0 <= a.warmup_epochs <= 300):
         ap.error("invalid training budget")
     if a.mode == "baseline" and (a.sites != "p3" or a.channel_gate):
         ap.error("baseline does not have mixer sites or channel gating")
@@ -106,6 +110,7 @@ def main():
                 batch=a.batch, workers=0, device=a.device, project=str(work), name="run",
                 exist_ok=False, seed=a.seed, deterministic=True, amp=False, plots=False,
                 optimizer=a.optimizer, lr0=a.lr0, mosaic=a.mosaic, close_mosaic=a.close_mosaic,
+                nbs=a.nbs, warmup_bias_lr=a.warmup_bias_lr, warmup_epochs=a.warmup_epochs,
                 patience=0, verbose=False,
                 cache="ram" if a.cache == "ram" else False, val=True, save=True)
     print("Completed", a.mode, "in", work, flush=True)
