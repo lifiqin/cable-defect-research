@@ -1,3 +1,6 @@
+import contextlib
+import io
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,10 +9,24 @@ from unittest.mock import patch
 import torch
 from PIL import Image
 
-from cable_research.faster_rcnn import ScratchDataset, UltralyticsAP, collate, decode_yolo
+from cable_research.faster_rcnn import ScratchDataset, UltralyticsAP, collate, decode_yolo, is_better, main
 
 
 class FasterRCNNTests(unittest.TestCase):
+    def test_checkpoint_selection_follows_requested_metric(self):
+        metrics = {"map50": 0.8, "map50_95": 0.4}
+        self.assertTrue(is_better(metrics, 0.7, "map50"))
+        self.assertFalse(is_better(metrics, 0.7, "map50_95"))
+        with self.assertRaises(ValueError):
+            is_better(metrics, 0.7, "unknown")
+
+    def test_unknown_checkpoint_selection_is_rejected_before_io(self):
+        args = ["faster_rcnn", "--dataset", "unused", "--fold-plan", "unused", "--weights", "unused",
+                "--work", "unused", "--selection", "unsupported"]
+        with (patch.object(sys, "argv", args), contextlib.redirect_stderr(io.StringIO()),
+              self.assertRaises(SystemExit)):
+            main()
+
     def test_ultralytics_ap_matches_by_class_and_iou(self):
         metric = UltralyticsAP()
         metric.update({"boxes": torch.tensor([[0., 0., 10., 10.]]), "labels": torch.tensor([1]),

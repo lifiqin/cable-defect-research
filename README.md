@@ -77,6 +77,8 @@ python -m cable_research.faster_eval --dataset DATASET_ROOT --split ./local/fast
 
 `prepare_external` 会复制图像和标签至新的私有目录并检查 SHA-256，不要将该目录或检查点加入 Git。RF-DETR 使用的 COCO `max_dets` 和 Ultralytics 的推理、匹配流程不一定一致；即使输入和分组相同，也应说明评估口径，而不是把数值当成完全同一协议的排行榜。Faster R-CNN 中类别 0 保留给背景，标注类别依次映射为 1、2；默认调用 Ultralytics 的框匹配和 AP 计算，也可用 `--metric coco` 调用另装依赖提供的 COCO 实现。网络预处理、候选框与 NMS 仍不同。
 
+Faster R-CNN 默认按验证集 mAP50–95 保存最佳检查点，且只在首轮、末轮和 `--eval-every` 指定的间隔验证；如研究目标为 mAP50，可设置 `--selection map50`，或从 `epochs.jsonl` 中另外记录已测轮次的 mAP50 峰值与所在轮次。默认设置下不能误称该峰值一定对应已保存的最佳检查点。
+
 在 Faster R-CNN 命令中可分别增加 `--neck context`、`--head taskdual` 或同时增加两者，比较对应单因素和组合；重新评估时应传入相同的 `--neck` 与 `--head`。前者在预训练 FPN 的 P2/P3 增加局部膨胀上下文残差，后者在分类和回归预测前增加独立残差适配；初始输出不变。这只是可检验的简化原型，**不是**完整的 [DPN-Detector](https://www.mdpi.com/2076-3417/13/2/1054) 或 [AMFNet](https://link.springer.com/article/10.1007/s10845-025-02613-5)。
 
 YOLO 的 `baseline` 模式还可用 `--architecture` 指定已安装的架构 YAML（例如带 P2 输出的结构），随后从本地权重迁移兼容参数。此时不是全部层都能迁移，必须记录实际迁移数量，不可与完整预训练模型当作严格的单因素比较。

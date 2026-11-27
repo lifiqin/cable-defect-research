@@ -47,6 +47,12 @@ def collate(batch):
     return tuple(zip(*batch, strict=True))
 
 
+def is_better(validation, best, selection):
+    if selection not in {"map50", "map50_95"}:
+        raise ValueError("unsupported checkpoint selection metric")
+    return float(validation[selection]) > best
+
+
 class ScratchDataset(Dataset):
     def __init__(self, image_list: Path, dataset: Path, size: int, augment: bool):
         self.paths = [Path(s) for s in image_list.read_text(encoding="utf-8").splitlines() if s]
@@ -159,6 +165,7 @@ def main():
     ap.add_argument("--neck", choices=("standard", "context"), default="standard")
     ap.add_argument("--head", choices=("standard", "taskdual"), default="standard")
     ap.add_argument("--metric", choices=("ultralytics", "coco"), default="ultralytics")
+    ap.add_argument("--selection", choices=("map50", "map50_95"), default="map50_95")
     a = ap.parse_args()
     if not 1 <= a.epochs <= 300 or a.eval_every < 1 or a.imgsz < 128 or a.batch < 1:
         ap.error("invalid budget")
@@ -204,7 +211,8 @@ def main():
     best = -1.0
     (work / "protocol.json").write_text(json.dumps({"counts": counts, "model": "FasterRCNN R50-FPN-v2",
         "training_recipe": "SGD 0.005, horizontal flip, evaluation every N epochs; not YOLO recipe",
-        "neck": a.neck, "head": a.head, "metric": a.metric, "classes": {"1": "scratch", "2": "hole"},
+        "neck": a.neck, "head": a.head, "metric": a.metric, "selection": a.selection,
+        "classes": {"1": "scratch", "2": "hole"},
         "eval_max_dets": 300}, indent=2) + "\n", encoding="utf-8")
     with (work / "epochs.jsonl").open("x", encoding="utf-8") as log:
         for epoch in range(1, a.epochs + 1):
@@ -223,8 +231,8 @@ def main():
             row = {"epoch": epoch, "mean_train_loss": total / len(train_loader)}
             if epoch == 1 or epoch % a.eval_every == 0 or epoch == a.epochs:
                 row["validation"] = evaluate(model, val_loader, device, backend=a.metric)
-                if row["validation"]["map50_95"] > best:
-                    best = row["validation"]["map50_95"]
+                if is_better(row["validation"], best, a.selection):
+                    best = row["validation"][a.selection]
                     torch.save(model.state_dict(), work / "best_state.pt")
                     (work / "best_validation.json").write_text(json.dumps(row, indent=2) + "\n", encoding="utf-8")
             log.write(json.dumps(row) + "\n")
